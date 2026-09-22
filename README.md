@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Туалетные истории 16 · главное меню</title>
+    <title>Туалетные истории 16 · марафон</title>
     <style>
         * {
             margin: 0;
@@ -120,6 +120,27 @@
         }
         .menu-btn-secondary:active {
             box-shadow: 0 2px 0 #2d3f4a;
+        }
+        .menu-btn-gold {
+            background: #c9a84d;
+            color: #1d130e;
+            box-shadow: 0 8px 0 #8a6d2a;
+            font-size: 1.5rem;
+            padding: 0.7rem 2.5rem;
+        }
+        .menu-btn-gold:active {
+            box-shadow: 0 2px 0 #8a6d2a;
+        }
+        .menu-btn-gold.locked {
+            background: #5a4a3a;
+            color: #8a7a6a;
+            box-shadow: 0 8px 0 #3a2a1a;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+        .menu-btn-gold.locked:active {
+            transform: none;
+            box-shadow: 0 8px 0 #3a2a1a;
         }
         .menu-footer {
             margin-top: 2rem;
@@ -290,6 +311,30 @@
         .fullscreen-btn:active {
             box-shadow: 0 1px 0 #2d3f4a;
         }
+        .search-btn {
+            background: #4d7a6b;
+            color: #f2e3d0;
+            box-shadow: 0 5px 0 #2d4a3f;
+            font-size: 0.9rem;
+            padding: 0.3rem 1rem;
+        }
+        .search-btn:active {
+            box-shadow: 0 1px 0 #2d4a3f;
+        }
+        .search-btn.active {
+            background: #7a4d6b;
+            box-shadow: 0 5px 0 #4a2d3f;
+        }
+        .menu-btn-exit {
+            background: #6b4d4d;
+            color: #f2e3d0;
+            box-shadow: 0 5px 0 #3a2d2d;
+            font-size: 0.9rem;
+            padding: 0.3rem 1rem;
+        }
+        .menu-btn-exit:active {
+            box-shadow: 0 1px 0 #3a2d2d;
+        }
         @media (max-width: 800px) {
             .game-wrapper { padding: 0.8rem; }
             canvas { width: 100%; height: auto; aspect-ratio: 750/470; }
@@ -311,10 +356,11 @@
         <div class="menu-title">🚽 ТУАЛЕТНЫЕ<br>ИСТОРИИ 16</div>
         <div class="menu-sub">🔍 найди все аномалии</div>
         <div class="menu-emoji-row">🧻👻🚽🕵️</div>
-        <button class="menu-btn" id="startGameBtn">▶ ИГРАТЬ</button>
+        <button class="menu-btn" id="startGameBtn">▶ ИГРАТЬ (16)</button>
+        <button class="menu-btn menu-btn-gold locked" id="marathonBtn" disabled>🔒 МАРАФОН (64)</button>
         <button class="menu-btn menu-btn-secondary" id="resetGameBtn">⟳ Заново</button>
         <div class="menu-footer">
-            <span>🧼 16 комнат · не более 2 аномалий подряд</span>
+            <span id="marathonStatus">🧼 Пройдите 16 комнат, чтобы открыть марафон</span>
         </div>
     </div>
 </div>
@@ -329,9 +375,11 @@
             <div class="footer">
                 <span class="progress-text" id="progressDisplay">0/16</span>
                 <div class="button-group">
+                    <button id="searchButton" class="search-btn">🔎 Обзор</button>
                     <button id="fullscreenButton" class="fullscreen-btn">⛶</button>
                     <button id="backButton">◀</button>
                     <button id="actionButton">➡️</button>
+                    <button id="exitToMenuButton" class="menu-btn-exit">🏠 Меню</button>
                 </div>
             </div>
         </div>
@@ -343,6 +391,9 @@
         const menuOverlay = document.getElementById('menuOverlay');
         const startBtn = document.getElementById('startGameBtn');
         const resetBtn = document.getElementById('resetGameBtn');
+        const marathonBtn = document.getElementById('marathonBtn');
+        const marathonStatus = document.getElementById('marathonStatus');
+        const exitToMenuBtn = document.getElementById('exitToMenuButton');
 
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
@@ -354,8 +405,9 @@
         const actionBtn = document.getElementById('actionButton');
         const backBtn = document.getElementById('backButton');
         const fullscreenBtn = document.getElementById('fullscreenButton');
+        const searchBtn = document.getElementById('searchButton');
 
-        const MAX_ROOMS = 16;
+        let MAX_ROOMS = 16;
         let currentRoom = 1;
         let hasAnomaly = false;
         let anomalyType = 0;
@@ -363,11 +415,94 @@
         let isFullscreen = false;
         let animFrameId = null;
         let time = 0;
+        let isSearching = false;
+        let isMarathon = false;
+        let marathonUnlocked = false;
+        let epicEnding = false;
+        let epicTime = 0;
 
         let anomalyData = {
             offsetX: 0, offsetY: 0, rotation: 0, scale: 1,
-            flicker: 0, pulse: 0, floatOffset: 0, speed: 1
+            flicker: 0, pulse: 0, floatOffset: 0, speed: 1,
+            alpha: 1, glowIntensity: 0
         };
+
+        // ------ ЗВУКИ ------
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        let musicInterval = null;
+
+        function playBeep(freq, duration, vol = 0.3) {
+            try {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sawtooth';
+                osc.frequency.value = freq;
+                gain.gain.value = vol;
+                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + duration);
+            } catch(e) {}
+        }
+
+        function playEpicMusic() {
+            if (musicInterval) {
+                clearInterval(musicInterval);
+                musicInterval = null;
+            }
+            const notes = [523, 587, 659, 784, 880, 988, 1175];
+            let noteIndex = 0;
+            musicInterval = setInterval(() => {
+                const note = notes[noteIndex % notes.length];
+                const vol = 0.15 + Math.sin(noteIndex * 0.5) * 0.05;
+                playBeep(note, 0.15, vol);
+                if (noteIndex % 2 === 0) {
+                    setTimeout(() => playBeep(note * 1.25, 0.1, vol * 0.6), 80);
+                }
+                noteIndex++;
+                if (noteIndex > 60) {
+                    noteIndex = 0;
+                }
+            }, 180);
+        }
+
+        function stopEpicMusic() {
+            if (musicInterval) {
+                clearInterval(musicInterval);
+                musicInterval = null;
+            }
+        }
+
+        function playScareSound() {
+            for (let i = 0; i < 3; i++) {
+                setTimeout(() => playBeep(400 + i * 200, 0.15, 0.4), i * 80);
+            }
+            setTimeout(() => playBeep(900, 0.3, 0.5), 200);
+        }
+
+        function playAlertSound() {
+            playBeep(600, 0.2, 0.25);
+            setTimeout(() => playBeep(800, 0.2, 0.25), 150);
+            setTimeout(() => playBeep(600, 0.3, 0.3), 300);
+        }
+
+        function playToiletPaperSound() {
+            playBeep(300, 0.1, 0.2);
+            setTimeout(() => playBeep(350, 0.1, 0.2), 100);
+            setTimeout(() => playBeep(400, 0.15, 0.2), 200);
+        }
+
+        function playSearchSound() {
+            playBeep(440, 0.1, 0.15);
+            setTimeout(() => playBeep(550, 0.1, 0.15), 100);
+        }
+
+        function playUnlockSound() {
+            playBeep(523, 0.15, 0.3);
+            setTimeout(() => playBeep(659, 0.15, 0.3), 120);
+            setTimeout(() => playBeep(784, 0.2, 0.4), 240);
+        }
 
         // ------ ИЗОБРАЖЕНИЯ ------
         const images = {
@@ -380,6 +515,11 @@
             anomaly6: new Image(),
             anomaly7: new Image(),
             anomaly8: new Image(),
+            anomaly9: new Image(),
+            anomaly10: new Image(),
+            anomaly11: new Image(),
+            anomaly12: new Image(),
+            anomaly13: new Image(),
             windi31: new Image()
         };
 
@@ -392,161 +532,314 @@
         images.anomaly6.src = 'https://static.vecteezy.com/system/resources/previews/040/323/643/non_2x/ai-generated-black-garbage-bag-trash-bag-on-transparent-background-free-png.png';
         images.anomaly7.src = 'https://image.pngaaa.com/761/4327761-middle.png';
         images.anomaly8.src = 'https://cdn.icon-icons.com/icons2/2070/PNG/512/toilet_icon_126466.png';
+        images.anomaly9.src = 'https://i.pinimg.com/736x/8c/24/2f/8c242f29e7c25756ea2bcb78a54a3e80.jpg';
+        images.anomaly10.src = 'https://image.made-in-china.com/2f0j00RSiWvjJPGBkm/Pink-Color-Embossed-Virgin-Toilet-Tissue-2ply-Pink-Toilet-Paper-Roll-Soft-Factory-Price-Wholesale-Toilet-Tissue.png';
+        images.anomaly11.src = 'https://avatars.mds.yandex.net/i?id=f557b5b577e2ffcdd2919dbcfdd06ab3_l-4590062-images-thumbs&png';
+        images.anomaly12.src = 'https://avatars.mds.yandex.net/i?id=b7aafbe3ae97c0c5f6b58e5ba8273a2d_l-5294324-images-thumbs&png';
+        images.anomaly13.src = 'https://static.vecteezy.com/system/resources/previews/048/081/951/non_2x/red-siren-light-warning-sign-police-alarm-ambulance-alarm-cartoon-illustration-vector.jpg';
         images.windi31.src = 'https://pic.rtbcdn.ru/user/b5/87/b587ecd7a3492734866ee096fc1186c9.jpg';
 
-        const ANOMALY_TYPES = 8;
-        let roomAnomalyMap = new Array(MAX_ROOMS + 1).fill(0);
-        let windiRooms = new Array(MAX_ROOMS + 1).fill(false);
+        const ANOMALY_TYPES = 13;
+        let roomAnomalyMap = [];
+        let windiRooms = [];
+        let anomalyFound = [];
 
-        // ----- ГЕНЕРАЦИЯ АНОМАЛИЙ (не более 2 подряд, после 2 аномалий — 2 чистых) -----
+        function initMaps() {
+            roomAnomalyMap = new Array(MAX_ROOMS + 1).fill(0);
+            windiRooms = new Array(MAX_ROOMS + 1).fill(false);
+            anomalyFound = new Array(MAX_ROOMS + 1).fill(false);
+        }
+
+        // ----- ГЕНЕРАЦИЯ АНОМАЛИЙ (увеличенный рандом) -----
         function generateAnomalies() {
-            roomAnomalyMap.fill(0);
-            const totalAnomalies = 6 + Math.floor(Math.random() * 3);
+            initMaps();
+            // Больше вариаций количества аномалий (от 25% до 55% комнат)
+            const totalAnomalies = Math.floor(MAX_ROOMS * (0.25 + Math.random() * 0.3));
             let placed = 0, attempts = 0;
 
-            while (placed < totalAnomalies && attempts < 1000) {
+            while (placed < totalAnomalies && attempts < 3000) {
                 attempts++;
                 const room = Math.floor(Math.random() * MAX_ROOMS) + 1;
                 if (roomAnomalyMap[room] !== 0) continue;
 
-                let leftAnomaly = (room > 1 && roomAnomalyMap[room-1] !== 0);
-                let rightAnomaly = (room < MAX_ROOMS && roomAnomalyMap[room+1] !== 0);
-                if (leftAnomaly && room > 2 && roomAnomalyMap[room-2] !== 0) continue;
-                if (rightAnomaly && room < MAX_ROOMS-1 && roomAnomalyMap[room+2] !== 0) continue;
-
+                // Случайные проверки на соседние аномалии (более гибкие)
                 let leftStreak = 0, temp = room - 1;
                 while (temp >= 1 && roomAnomalyMap[temp] !== 0) { leftStreak++; temp--; }
                 let rightStreak = 0; temp = room + 1;
                 while (temp <= MAX_ROOMS && roomAnomalyMap[temp] !== 0) { rightStreak++; temp++; }
 
-                if (leftStreak >= 2 || rightStreak >= 2) continue;
+                // Максимум 3 аномалии подряд (вместо 2)
+                if (leftStreak >= 3 || rightStreak >= 3) continue;
 
-                if (leftStreak === 1 && room > 1 && roomAnomalyMap[room-1] !== 0) {
-                    let lastAnomaly = room - 1;
-                    while (lastAnomaly >= 1 && roomAnomalyMap[lastAnomaly] !== 0) lastAnomaly--;
-                    if (lastAnomaly >= 1 && room - lastAnomaly - 1 >= 2) {
-                        let cleanAfter = 0;
-                        for (let i = lastAnomaly + 1; i <= MAX_ROOMS; i++) {
-                            if (roomAnomalyMap[i] === 0) cleanAfter++;
-                            else break;
-                        }
-                        if (cleanAfter < 2) continue;
-                    }
-                }
-
-                if (rightStreak === 1 && room < MAX_ROOMS && roomAnomalyMap[room+1] !== 0) {
-                    let lastAnomaly = room + 1;
-                    while (lastAnomaly <= MAX_ROOMS && roomAnomalyMap[lastAnomaly] !== 0) lastAnomaly++;
-                    if (lastAnomaly <= MAX_ROOMS && lastAnomaly - room - 1 >= 2) {
-                        let cleanAfter = 0;
-                        for (let i = room + 2; i <= MAX_ROOMS; i++) {
-                            if (roomAnomalyMap[i] === 0) cleanAfter++;
-                            else break;
-                        }
-                        if (cleanAfter < 2) continue;
-                    }
-                }
+                // Случайный шанс пропуска (добавляем больше хаоса)
+                if (Math.random() < 0.15) continue;
 
                 roomAnomalyMap[room] = Math.floor(Math.random() * ANOMALY_TYPES) + 1;
                 placed++;
             }
 
-            // Коррекция
-            for (let i = 1; i <= MAX_ROOMS - 2; i++) {
-                if (roomAnomalyMap[i] !== 0 && roomAnomalyMap[i+1] !== 0 && roomAnomalyMap[i+2] !== 0) {
-                    roomAnomalyMap[i+1] = 0;
-                }
-            }
+            // Коррекция: удаляем 4+ подряд
             for (let i = 1; i <= MAX_ROOMS - 3; i++) {
-                if (roomAnomalyMap[i] !== 0 && roomAnomalyMap[i+1] !== 0) {
-                    if (roomAnomalyMap[i+2] !== 0) roomAnomalyMap[i+2] = 0;
-                    if (i+3 <= MAX_ROOMS && roomAnomalyMap[i+3] !== 0) roomAnomalyMap[i+3] = 0;
+                if (roomAnomalyMap[i] !== 0 && roomAnomalyMap[i+1] !== 0 && 
+                    roomAnomalyMap[i+2] !== 0 && roomAnomalyMap[i+3] !== 0) {
+                    roomAnomalyMap[i+1] = 0;
+                    roomAnomalyMap[i+2] = 0;
                 }
             }
+            
+            // Убеждаемся, что есть хотя бы несколько аномалий
             let count = 0;
             for (let i = 1; i <= MAX_ROOMS; i++) if (roomAnomalyMap[i] !== 0) count++;
-            if (count < 4) {
-                for (let i = 1; i <= MAX_ROOMS && count < 4; i++) {
+            
+            // Если аномалий слишком мало или слишком много - корректируем
+            const minAnomalies = Math.floor(MAX_ROOMS * 0.15);
+            const maxAnomalies = Math.floor(MAX_ROOMS * 0.55);
+            
+            if (count < minAnomalies) {
+                const needed = minAnomalies - count;
+                let added = 0;
+                for (let i = 1; i <= MAX_ROOMS && added < needed; i++) {
                     if (roomAnomalyMap[i] === 0) {
                         let left = (i > 1 && roomAnomalyMap[i-1] !== 0);
                         let right = (i < MAX_ROOMS && roomAnomalyMap[i+1] !== 0);
-                        if (!left && !right) {
+                        // Проверяем на 3 подряд
+                        let left2 = (i > 2 && roomAnomalyMap[i-2] !== 0);
+                        let right2 = (i < MAX_ROOMS-1 && roomAnomalyMap[i+2] !== 0);
+                        if (!left || !right || !(left && right2) || !(right && left2)) {
                             roomAnomalyMap[i] = Math.floor(Math.random() * ANOMALY_TYPES) + 1;
-                            count++;
+                            added++;
                         }
                     }
+                }
+            } else if (count > maxAnomalies) {
+                // Удаляем лишние аномалии случайно
+                const toRemove = count - maxAnomalies;
+                let removed = 0;
+                const rooms = [];
+                for (let i = 1; i <= MAX_ROOMS; i++) {
+                    if (roomAnomalyMap[i] !== 0) rooms.push(i);
+                }
+                // Перемешиваем и удаляем
+                for (let i = rooms.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [rooms[i], rooms[j]] = [rooms[j], rooms[i]];
+                }
+                for (let i = 0; i < Math.min(toRemove, rooms.length); i++) {
+                    roomAnomalyMap[rooms[i]] = 0;
                 }
             }
         }
 
         function generateWindiRooms() {
-            for (let i = 1; i <= MAX_ROOMS; i++) windiRooms[i] = Math.random() < 0.4;
+            // Больше рандома для Винди
+            for (let i = 1; i <= MAX_ROOMS; i++) {
+                windiRooms[i] = Math.random() < (0.2 + Math.random() * 0.3);
+            }
             let hasWindi = false;
             for (let i = 1; i <= MAX_ROOMS; i++) if (windiRooms[i]) { hasWindi = true; break; }
-            if (!hasWindi) windiRooms[Math.floor(Math.random() * MAX_ROOMS) + 1] = true;
+            if (!hasWindi) {
+                const room = Math.floor(Math.random() * MAX_ROOMS) + 1;
+                windiRooms[room] = true;
+                // Может быть несколько Винди
+                if (Math.random() < 0.3) {
+                    const room2 = Math.floor(Math.random() * MAX_ROOMS) + 1;
+                    if (room2 !== room) windiRooms[room2] = true;
+                }
+            }
         }
 
         function updateUI() {
             roomDisplay.textContent = `🚽 ${currentRoom} / ${MAX_ROOMS}`;
             progressDisplay.textContent = `${currentRoom-1}/${MAX_ROOMS}`;
+            
+            if (epicEnding) {
+                messageDisplay.textContent = '🌟 ГИПЕР ЭПИК КОНЦОВКА! 🌟';
+                actionBtn.disabled = true;
+                backBtn.disabled = true;
+                searchBtn.disabled = true;
+                exitToMenuBtn.style.display = 'inline-block';
+                return;
+            }
+            
             if (gameFinished) {
-                messageDisplay.textContent = '🏆 ПОБЕДА!';
+                messageDisplay.textContent = isMarathon ? '🏆 МАРАФОН ПРОЙДЕН!' : '🏆 ПОБЕДА!';
                 actionBtn.disabled = true;
                 backBtn.disabled = true;
                 actionBtn.textContent = '🏁';
                 backBtn.textContent = '◀';
+                searchBtn.disabled = true;
+                exitToMenuBtn.style.display = 'inline-block';
                 return;
             }
             actionBtn.disabled = false;
             backBtn.disabled = false;
+            searchBtn.disabled = false;
+            exitToMenuBtn.style.display = 'none';
             actionBtn.textContent = '➡️';
             backBtn.textContent = '◀';
-            if (hasAnomaly) messageDisplay.textContent = '⚠️ АНОМАЛИЯ';
-            else messageDisplay.textContent = '✅ ЧИСТО';
+            
+            if (hasAnomaly) {
+                if (anomalyFound[currentRoom]) {
+                    messageDisplay.textContent = '✅ АНОМАЛИЯ НАЙДЕНА!';
+                } else {
+                    messageDisplay.textContent = '🔍 ИЩИ АНОМАЛИЮ';
+                }
+            } else {
+                messageDisplay.textContent = '✅ ЧИСТО';
+            }
         }
 
+        // ----- УЛУЧШЕННАЯ АНИМАЦИЯ АНОМАЛИЙ С БОЛЬШИМ РАНДОМОМ -----
         function updateAnomalyAnimation() {
-            if (!hasAnomaly || gameFinished) return;
-            const speed = 0.02 + Math.random() * 0.02;
-            time += speed;
-            anomalyData.floatOffset = Math.sin(time * 1.2) * 15;
-            anomalyData.offsetX = Math.sin(time * 0.7) * 20;
-            anomalyData.offsetY = Math.sin(time * 0.9 + 1) * 15 + anomalyData.floatOffset * 0.3;
-            anomalyData.rotation = Math.sin(time * 0.5) * 0.3;
-            anomalyData.pulse = 0.85 + Math.sin(time * 1.8) * 0.15;
+            if (!hasAnomaly || gameFinished || epicEnding) return;
+            
+            // Базовая скорость с большим рандомом
+            const baseSpeed = 0.015 + Math.random() * 0.035;
+            time += baseSpeed;
+            
+            // Разные частоты для разных осей (больше рандома)
+            const freqX = 0.4 + Math.random() * 1.2;
+            const freqY = 0.5 + Math.random() * 1.4;
+            const freqRot = 0.3 + Math.random() * 0.9;
+            const freqScale = 0.6 + Math.random() * 1.6;
+            const freqAlpha = 0.8 + Math.random() * 2.5;
+            
+            // Амплитуды с рандомом
+            const ampX = 15 + Math.random() * 35;
+            const ampY = 10 + Math.random() * 30;
+            const ampRot = 0.15 + Math.random() * 0.5;
+            const ampScale = 0.05 + Math.random() * 0.25;
+            
+            anomalyData.floatOffset = Math.sin(time * 1.2 + Math.random() * 0.5) * (10 + Math.random() * 15);
+            anomalyData.offsetX = Math.sin(time * freqX + Math.random() * 2) * ampX;
+            anomalyData.offsetY = Math.sin(time * freqY + Math.random() * 2 + 1) * ampY + anomalyData.floatOffset * (0.2 + Math.random() * 0.3);
+            anomalyData.rotation = Math.sin(time * freqRot + Math.random() * 3) * ampRot;
+            anomalyData.pulse = (0.8 + Math.random() * 0.2) + Math.sin(time * freqScale + Math.random() * 2) * ampScale;
             anomalyData.scale = anomalyData.pulse;
-            anomalyData.flicker = 0.5 + Math.sin(time * 3.5 + anomalyType * 2) * 0.25; // снизили базовую прозрачность
-            if (anomalyType === 3) {
-                anomalyData.offsetX = Math.sin(time * 1.5) * 25;
-                anomalyData.offsetY = Math.sin(time * 1.3 + 0.5) * 20;
-                anomalyData.rotation = Math.sin(time * 1.2) * 0.4;
-            } else if (anomalyType === 4) {
-                anomalyData.offsetY = Math.abs(Math.sin(time * 1.6)) * 20 - 10;
-                anomalyData.rotation = Math.sin(time * 0.8) * 0.2;
-            } else if (anomalyType === 1) {
-                anomalyData.rotation = Math.sin(time * 0.9) * 0.5;
-                anomalyData.scale = 0.9 + Math.sin(time * 1.1) * 0.1;
-            } else if (anomalyType === 2) {
-                anomalyData.offsetX = Math.sin(time * 0.5) * 18;
-                anomalyData.rotation = Math.sin(time * 0.4 + 0.3) * 0.25;
-            } else if (anomalyType === 5) {
-                anomalyData.offsetY = Math.sin(time * 1.8) * 12;
-                anomalyData.scale = 0.9 + Math.sin(time * 0.7) * 0.1;
-            } else if (anomalyType === 6) {
-                anomalyData.offsetY = Math.abs(Math.sin(time * 2.2)) * 25 - 12;
-                anomalyData.rotation = Math.sin(time * 0.6) * 0.15;
+            anomalyData.flicker = 0.3 + Math.sin(time * freqAlpha + Math.random() * 4) * (0.2 + Math.random() * 0.2);
+            anomalyData.alpha = 0.3 + Math.sin(time * (0.5 + Math.random() * 2) + Math.random() * 3) * 0.25;
+            
+            // Специфичные анимации для разных типов (с рандомом)
+            if (anomalyType === 9) {
+                anomalyData.offsetY = Math.sin(time * (0.8 + Math.random() * 0.6)) * (8 + Math.random() * 15);
+                anomalyData.scale = 0.85 + Math.sin(time * (0.5 + Math.random() * 0.8)) * (0.05 + Math.random() * 0.15);
+                anomalyData.rotation = Math.sin(time * (0.3 + Math.random() * 0.5) + Math.random() * 2) * (0.1 + Math.random() * 0.3);
+            } else if (anomalyType === 10) {
+                anomalyData.offsetX = Math.sin(time * (1.5 + Math.random() * 1.5)) * (20 + Math.random() * 30);
+                anomalyData.rotation = Math.sin(time * (1.0 + Math.random() * 1.2) + Math.random() * 2) * (0.3 + Math.random() * 0.4);
+                anomalyData.offsetY = Math.sin(time * (1.0 + Math.random() * 1.0) + Math.random() * 2) * (10 + Math.random() * 20);
+            } else if (anomalyType === 11) {
+                anomalyData.offsetX = Math.sin(time * (0.5 + Math.random() * 0.8)) * (30 + Math.random() * 50);
+                anomalyData.offsetY = Math.sin(time * (0.7 + Math.random() * 1.0) + Math.random() * 2) * (20 + Math.random() * 30);
+                anomalyData.scale = 0.7 + Math.sin(time * (0.6 + Math.random() * 0.8) + Math.random() * 2) * (0.15 + Math.random() * 0.25);
+                anomalyData.rotation = Math.sin(time * (0.4 + Math.random() * 0.6) + Math.random() * 3) * (0.3 + Math.random() * 0.5);
+            } else if (anomalyType === 12) {
+                anomalyData.offsetX = Math.sin(time * (1.0 + Math.random() * 1.2)) * (25 + Math.random() * 40);
+                anomalyData.offsetY = Math.cos(time * (1.2 + Math.random() * 1.4) + Math.random() * 2) * (15 + Math.random() * 30);
+                anomalyData.rotation = Math.sin(time * (1.5 + Math.random() * 1.5) + Math.random() * 3) * (0.2 + Math.random() * 0.4);
+            } else if (anomalyType === 13) {
+                anomalyData.pulse = 0.5 + Math.sin(time * (3.0 + Math.random() * 2.0) + Math.random() * 3) * (0.3 + Math.random() * 0.2);
+                anomalyData.scale = anomalyData.pulse;
+                anomalyData.offsetX = Math.sin(time * (0.3 + Math.random() * 0.4) + Math.random() * 2) * (5 + Math.random() * 15);
+                anomalyData.offsetY = Math.sin(time * (0.3 + Math.random() * 0.4) + Math.random() * 2 + 1) * (5 + Math.random() * 15);
+                anomalyData.alpha = 0.4 + Math.sin(time * (3.0 + Math.random() * 3.0) + Math.random() * 4) * 0.3;
             } else if (anomalyType === 7) {
-                anomalyData.offsetY = Math.sin(time * 3.0) * 30;
-                anomalyData.offsetX = Math.sin(time * 2.5 + 1) * 20;
-                anomalyData.scale = 0.7 + Math.sin(time * 2.0) * 0.3;
-            } else if (anomalyType === 8) {
-                anomalyData.offsetX = Math.sin(time * 0.8) * 40;
-                anomalyData.offsetY = Math.cos(time * 0.8 + 0.5) * 30;
-                anomalyData.rotation = time * 0.3;
+                // Для множественных аномалий - свой рандом
+                anomalyData.offsetX = Math.sin(time * 0.5 + Math.random() * 2) * (10 + Math.random() * 20);
+                anomalyData.offsetY = Math.sin(time * 0.6 + Math.random() * 2 + 1) * (10 + Math.random() * 20);
+            } else {
+                // Общая анимация для остальных типов
+                anomalyData.offsetX = Math.sin(time * (0.5 + Math.random() * 0.8) + Math.random() * 2) * (15 + Math.random() * 25);
+                anomalyData.offsetY = Math.sin(time * (0.6 + Math.random() * 0.9) + Math.random() * 2 + 1) * (10 + Math.random() * 20);
+                anomalyData.rotation = Math.sin(time * (0.4 + Math.random() * 0.6) + Math.random() * 3) * (0.2 + Math.random() * 0.3);
+                anomalyData.scale = 0.85 + Math.sin(time * (0.6 + Math.random() * 1.0) + Math.random() * 2) * (0.05 + Math.random() * 0.15);
+            }
+            
+            // Случайные "всплески" анимации
+            if (Math.random() < 0.01) {
+                anomalyData.offsetX += (Math.random() - 0.5) * 40;
+                anomalyData.offsetY += (Math.random() - 0.5) * 30;
+            }
+        }
+
+        function drawEpicEnding() {
+            epicTime += 0.02;
+            
+            const gradient = ctx.createLinearGradient(0, 0, 750, 470);
+            const hue1 = (epicTime * 30) % 360;
+            const hue2 = (epicTime * 30 + 120) % 360;
+            const hue3 = (epicTime * 30 + 240) % 360;
+            gradient.addColorStop(0, `hsl(${hue1}, 80%, 50%)`);
+            gradient.addColorStop(0.5, `hsl(${hue2}, 80%, 50%)`);
+            gradient.addColorStop(1, `hsl(${hue3}, 80%, 50%)`);
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, 750, 470);
+
+            const allTypes = [1,2,3,4,5,6,7,8,9,10,11,12,13];
+            allTypes.forEach((type, idx) => {
+                const angle = epicTime * 0.5 + idx * 2.1 + Math.sin(epicTime * 0.2 + idx) * 0.5;
+                const radius = 120 + Math.sin(epicTime * 0.3 + idx * 0.7) * 60;
+                const px = 375 + Math.cos(angle) * radius;
+                const py = 235 + Math.sin(angle * 0.7 + epicTime * 0.2 + idx * 0.3) * radius * 0.6;
+                const size = 50 + Math.sin(epicTime + idx * 0.5) * 15 + Math.random() * 5;
+                const imgKey = `anomaly${type}`;
+                if (images[imgKey] && images[imgKey].complete && images[imgKey].naturalWidth > 0) {
+                    ctx.save();
+                    ctx.globalAlpha = 0.6 + Math.sin(epicTime * 2 + idx * 0.7) * 0.3;
+                    ctx.translate(px, py);
+                    ctx.rotate(epicTime * 0.2 + idx * 0.3 + Math.sin(epicTime * 0.1 + idx) * 0.2);
+                    ctx.shadowColor = `hsl(${epicTime * 50 + idx * 30}, 100%, 60%)`;
+                    ctx.shadowBlur = 30 + Math.sin(epicTime + idx) * 10;
+                    ctx.drawImage(images[imgKey], -size/2, -size/2, size, size);
+                    ctx.restore();
+                }
+            });
+
+            ctx.save();
+            ctx.textAlign = 'center';
+            ctx.shadowColor = 'rgba(0,0,0,0.8)';
+            ctx.shadowBlur = 20;
+            
+            const glow = 0.7 + Math.sin(epicTime * 2) * 0.3;
+            ctx.fillStyle = `rgba(255, 215, 0, ${glow})`;
+            ctx.font = 'bold 60px sans-serif';
+            ctx.fillText('🌟 ГИПЕР ЭПИК 🌟', 375, 100);
+            
+            ctx.fillStyle = `rgba(255, 255, 255, ${0.5 + Math.sin(epicTime * 1.5) * 0.3})`;
+            ctx.font = 'bold 36px sans-serif';
+            ctx.fillText('ВСЕ АНОМАЛИИ СОБРАНЫ!', 375, 170);
+            
+            ctx.fillStyle = `rgba(255, 200, 100, ${0.6 + Math.sin(epicTime * 1.2) * 0.2})`;
+            ctx.font = 'bold 28px sans-serif';
+            ctx.fillText(`🚽 ${MAX_ROOMS} КОМНАТ ПРОЙДЕНО! 🏆`, 375, 230);
+            
+            ctx.fillStyle = `rgba(255, 150, 255, ${0.5 + Math.sin(epicTime * 0.8) * 0.2})`;
+            ctx.font = 'bold 22px sans-serif';
+            ctx.fillText('✨ ТЫ ЛЕГЕНДА! ✨', 375, 300);
+            
+            ctx.fillStyle = `rgba(200, 255, 200, ${0.4 + Math.sin(epicTime * 0.6) * 0.2})`;
+            ctx.font = '18px sans-serif';
+            ctx.fillText('Нажми "Меню" чтобы выйти в главное меню', 375, 380);
+            
+            ctx.restore();
+
+            for (let i = 0; i < 40; i++) {
+                const sx = (i * 137 + epicTime * 20 + Math.sin(i * 0.5) * 30) % 750;
+                const sy = (i * 251 + epicTime * 15 + Math.sin(i * 0.7) * 50) % 470;
+                const ss = 2 + Math.sin(epicTime * 3 + i * 0.5) * 2.5;
+                ctx.fillStyle = `rgba(255, 255, 255, ${0.2 + Math.sin(epicTime * 2 + i * 0.3) * 0.2})`;
+                ctx.beginPath();
+                ctx.arc(sx, sy, ss, 0, Math.PI * 2);
+                ctx.fill();
             }
         }
 
         function drawRoom() {
+            if (epicEnding) {
+                drawEpicEnding();
+                return;
+            }
+
             ctx.clearRect(0, 0, 750, 470);
             if (images.toilet.complete && images.toilet.naturalWidth > 0) {
                 ctx.drawImage(images.toilet, 0, 0, 750, 470);
@@ -557,6 +850,7 @@
                 ctx.font = 'bold 28px sans-serif';
                 ctx.fillText('🚽 ТУАЛЕТ', 280, 240);
             }
+            
             if (windiRooms[currentRoom] && images.windi31.complete && images.windi31.naturalWidth > 0) {
                 ctx.save();
                 const picSize = 70, picX = 10, picY = 25;
@@ -582,140 +876,271 @@
                 ctx.textAlign = 'start';
                 ctx.restore();
             }
+            
             if (hasAnomaly && !gameFinished) {
-                let imgToDraw = null;
-                let baseSize = 110;
-                let size = baseSize * anomalyData.scale;
-                let x = 750/2 - size/2 + anomalyData.offsetX;
-                let y = 470/2 - size/2 + 10 + anomalyData.offsetY;
-                switch (anomalyType) {
-                    case 1: imgToDraw = images.anomaly1; break;
-                    case 2: imgToDraw = images.anomaly2; break;
-                    case 3: imgToDraw = images.anomaly3; break;
-                    case 4: imgToDraw = images.anomaly4; break;
-                    case 5: imgToDraw = images.anomaly5; break;
-                    case 6: imgToDraw = images.anomaly6; break;
-                    case 7: imgToDraw = images.anomaly7; break;
-                    case 8: imgToDraw = images.anomaly8; break;
-                    default: break;
-                }
-                if (anomalyType === 3) {
-                    size = (130 + Math.sin(time * 0.5) * 10) * anomalyData.scale;
-                    x = 750/2 - size/2 - 10 + anomalyData.offsetX;
-                    y = 470/2 - size/2 - 5 + anomalyData.offsetY;
-                } else if (anomalyType === 4) {
-                    size = (120 + Math.sin(time * 0.7) * 8) * anomalyData.scale;
-                    x = 750/2 - size/2 + 5 + anomalyData.offsetX;
-                    y = 470/2 - size/2 + 5 + anomalyData.offsetY;
-                } else if (anomalyType === 5) {
-                    size = (140 + Math.sin(time * 0.5) * 10) * anomalyData.scale;
-                    x = 750/2 - size/2 + anomalyData.offsetX;
-                    y = 470/2 - size/2 + 10 + anomalyData.offsetY;
-                } else if (anomalyType === 6) {
-                    size = (130 + Math.sin(time * 0.3) * 5) * anomalyData.scale;
-                    x = 750/2 - size/2 + anomalyData.offsetX;
-                    y = 470/2 - size/2 + 15 + anomalyData.offsetY;
-                } else if (anomalyType === 7) {
-                    size = 40;
-                    const count = 6 + Math.floor(Math.sin(time * 0.5) * 2);
-                    for (let i = 0; i < count; i++) {
-                        const angle = time * 2.5 + i * 1.8;
-                        const dist = 60 + Math.sin(time * 0.7 + i) * 30;
-                        const px = 750/2 + Math.cos(angle + time * 0.5) * dist + anomalyData.offsetX * 0.5;
-                        const py = 470/2 + Math.sin(angle * 1.3 + time * 1.2) * dist * 0.6 + Math.sin(time * 3 + i) * 20 + anomalyData.offsetY * 0.5;
-                        if (images.anomaly7.complete && images.anomaly7.naturalWidth > 0) {
-                            const s = 25 + Math.sin(time + i) * 8;
-                            ctx.globalAlpha = 0.3 + Math.sin(time * 1.5 + i) * 0.15; // полупрозрачность
-                            ctx.drawImage(images.anomaly7, px - s/2, py - s/2, s, s);
+                const isFound = anomalyFound[currentRoom];
+                const isRevealed = isSearching || isFound;
+                
+                if (isRevealed) {
+                    let imgToDraw = null;
+                    let baseSize = 110;
+                    let size = baseSize * anomalyData.scale;
+                    let x = 750/2 - size/2 + anomalyData.offsetX;
+                    let y = 470/2 - size/2 + 10 + anomalyData.offsetY;
+                    let extraText = '';
+
+                    switch (anomalyType) {
+                        case 1: imgToDraw = images.anomaly1; break;
+                        case 2: imgToDraw = images.anomaly2; break;
+                        case 3: imgToDraw = images.anomaly3; break;
+                        case 4: imgToDraw = images.anomaly4; break;
+                        case 5: imgToDraw = images.anomaly5; break;
+                        case 6: imgToDraw = images.anomaly6; break;
+                        case 7: imgToDraw = images.anomaly7; break;
+                        case 8: imgToDraw = images.anomaly8; break;
+                        case 9: 
+                            imgToDraw = images.anomaly9; 
+                            extraText = 'Это я тебе';
+                            baseSize = 80;
+                            size = baseSize * anomalyData.scale;
+                            x = 750/2 - size/2 + anomalyData.offsetX;
+                            y = 470/2 - size/2 - 10 + anomalyData.offsetY;
+                            break;
+                        case 10: 
+                            imgToDraw = images.anomaly10; 
+                            baseSize = 90;
+                            size = baseSize * anomalyData.scale;
+                            x = 750/2 - size/2 + anomalyData.offsetX;
+                            y = 470/2 - size/2 + 10 + anomalyData.offsetY;
+                            break;
+                        case 11: 
+                            imgToDraw = images.anomaly11; 
+                            baseSize = 130;
+                            size = baseSize * anomalyData.scale;
+                            x = 750/2 - size/2 + anomalyData.offsetX;
+                            y = 470/2 - size/2 + 10 + anomalyData.offsetY;
+                            break;
+                        case 12: 
+                            imgToDraw = images.anomaly12; 
+                            baseSize = 80;
+                            size = baseSize * anomalyData.scale;
+                            x = 750/2 - size/2 + anomalyData.offsetX;
+                            y = 470/2 - size/2 + 10 + anomalyData.offsetY;
+                            break;
+                        case 13: 
+                            imgToDraw = images.anomaly13; 
+                            baseSize = 100;
+                            size = baseSize * anomalyData.scale;
+                            x = 750/2 - size/2 + anomalyData.offsetX;
+                            y = 470/2 - size/2 + 10 + anomalyData.offsetY;
+                            break;
+                        default: break;
+                    }
+
+                    if (anomalyType === 7) {
+                        size = 40;
+                        const count = 6 + Math.floor(Math.sin(time * 0.5 + Math.random() * 0.2) * 3);
+                        for (let i = 0; i < count; i++) {
+                            const angle = time * (2.0 + Math.random() * 1.0) + i * (1.5 + Math.random() * 0.6);
+                            const dist = 50 + Math.sin(time * 0.5 + i * 0.3 + Math.random() * 0.2) * 40;
+                            const px = 750/2 + Math.cos(angle + time * (0.3 + Math.random() * 0.3)) * dist + anomalyData.offsetX * (0.3 + Math.random() * 0.4);
+                            const py = 470/2 + Math.sin(angle * (1.1 + Math.random() * 0.3) + time * (0.8 + Math.random() * 0.4) + i * 0.2) * dist * 0.5 + Math.sin(time * 2 + i + Math.random() * 0.5) * 25 + anomalyData.offsetY * (0.3 + Math.random() * 0.4);
+                            if (images.anomaly7.complete && images.anomaly7.naturalWidth > 0) {
+                                const s = 20 + Math.sin(time + i * 0.5 + Math.random() * 0.2) * 12;
+                                let alpha = 0.2 + Math.sin(time * 1.2 + i * 0.5 + Math.random() * 0.2) * 0.2;
+                                if (!isFound && isSearching) alpha *= 0.5;
+                                ctx.globalAlpha = Math.max(0.1, Math.min(0.8, alpha));
+                                ctx.drawImage(images.anomaly7, px - s/2, py - s/2, s, s);
+                            }
+                        }
+                        ctx.globalAlpha = 1.0;
+                        return;
+                    }
+
+                    if (imgToDraw && imgToDraw.complete && imgToDraw.naturalWidth > 0) {
+                        let alpha = 0.3 + Math.sin(time * (1.5 + Math.random() * 1.5) + anomalyType * 1.2 + Math.random() * 0.5) * 0.3;
+                        if (anomalyType === 3 || anomalyType === 4) {
+                            alpha = 0.35 + Math.sin(time * (1.2 + Math.random() * 0.8) + anomalyType * 1.5 + Math.random() * 0.5) * 0.25;
+                        }
+                        if (anomalyType === 13) {
+                            alpha = 0.4 + Math.sin(time * (2.0 + Math.random() * 2.0) + Math.random() * 2) * 0.3;
+                        }
+                        if (!isFound && isSearching) {
+                            alpha *= 0.2 + Math.random() * 0.15;
+                            ctx.globalAlpha = Math.max(0.05, Math.min(0.35, alpha));
+                            ctx.shadowBlur = 0;
+                        } else if (isFound) {
+                            ctx.globalAlpha = Math.max(0.2, Math.min(0.9, alpha));
+                            if (anomalyType !== 5 && anomalyType !== 6 && anomalyType !== 10) {
+                                ctx.shadowColor = `rgba(255, 0, 0, ${0.05 + Math.random() * 0.15})`;
+                                ctx.shadowBlur = 10 + Math.sin(time * 1.2 + Math.random() * 0.5) * 15;
+                            }
+                        } else {
+                            ctx.globalAlpha = 0;
+                        }
+                        
+                        ctx.save();
+                        ctx.translate(x + size/2, y + size/2);
+                        ctx.rotate(anomalyData.rotation + Math.sin(time * 0.3 + Math.random() * 0.5) * 0.1);
+                        ctx.drawImage(imgToDraw, -size/2, -size/2, size, size);
+                        ctx.restore();
+                        ctx.shadowBlur = 0;
+                        ctx.globalAlpha = 1.0;
+
+                        if (isFound && anomalyType === 9 && extraText) {
+                            ctx.save();
+                            const textGlow = 0.6 + Math.sin(time * 1.5 + Math.random() * 0.5) * 0.3;
+                            ctx.fillStyle = `rgba(255, 215, 0, ${textGlow})`;
+                            ctx.font = 'bold 24px sans-serif';
+                            ctx.textAlign = 'center';
+                            ctx.shadowColor = 'rgba(0,0,0,0.9)';
+                            ctx.shadowBlur = 15 + Math.sin(time + Math.random() * 0.5) * 5;
+                            ctx.fillText(extraText, 750/2 + anomalyData.offsetX * 0.7, y + size + 30 + Math.sin(time * 0.5 + Math.random() * 0.5) * 5);
+                            ctx.restore();
+                        }
+
+                        if (isFound && (anomalyType === 3 || anomalyType === 4 || anomalyType === 11)) {
+                            ctx.save();
+                            const glowAlpha = 0.05 + Math.sin(time * 1.5 + Math.random() * 0.5) * 0.06;
+                            ctx.globalAlpha = Math.max(0.02, Math.min(0.15, glowAlpha));
+                            const glowSize = size * (1.2 + Math.sin(time * 0.5 + Math.random() * 0.5) * 0.3);
+                            const gradient = ctx.createRadialGradient(
+                                750/2 + anomalyData.offsetX * 0.5, 470/2 + anomalyData.offsetY * 0.5, 10,
+                                750/2 + anomalyData.offsetX * 0.5, 470/2 + anomalyData.offsetY * 0.5, glowSize
+                            );
+                            let color = anomalyType === 3 ? '#ff00ff' : anomalyType === 4 ? '#00ffaa' : '#ff4444';
+                            gradient.addColorStop(0, color);
+                            gradient.addColorStop(1, 'transparent');
+                            ctx.fillStyle = gradient;
+                            ctx.beginPath();
+                            ctx.arc(750/2 + anomalyData.offsetX * 0.5, 470/2 + anomalyData.offsetY * 0.5, glowSize, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.restore();
                         }
                     }
-                    ctx.globalAlpha = 1.0;
-                    return;
-                } else if (anomalyType === 8) {
-                    size = (120 + Math.sin(time * 0.4) * 10) * anomalyData.scale;
-                    x = 750/2 - size/2 + anomalyData.offsetX;
-                    y = 470/2 - size/2 + 10 + anomalyData.offsetY;
-                }
-                if (imgToDraw && imgToDraw.complete && imgToDraw.naturalWidth > 0) {
-                    // ПОЛУПРОЗРАЧНОСТЬ: базовая alpha 0.35–0.75, с мерцанием
-                    let alpha = 0.35 + 0.4 * (0.5 + 0.5 * Math.sin(time * 2.5 + anomalyType));
-                    if (anomalyType === 3 || anomalyType === 4) {
-                        alpha = 0.4 + 0.3 * (0.5 + 0.5 * Math.sin(time * 2 + anomalyType));
-                    }
-                    ctx.globalAlpha = Math.max(0.25, Math.min(0.8, alpha));
-                    
-                    if (anomalyType !== 5 && anomalyType !== 6) {
-                        ctx.shadowColor = 'rgba(255, 0, 0, 0.15)';
-                        ctx.shadowBlur = 15 + Math.sin(time * 1.5) * 8;
-                    }
-                    ctx.save();
-                    ctx.translate(x + size/2, y + size/2);
-                    ctx.rotate(anomalyData.rotation);
-                    ctx.drawImage(imgToDraw, -size/2, -size/2, size, size);
-                    ctx.restore();
-                    ctx.shadowBlur = 0;
-                    ctx.globalAlpha = 1.0;
-                    if (anomalyType === 3 || anomalyType === 4) {
-                        ctx.save();
-                        ctx.globalAlpha = 0.08 + Math.sin(time * 2) * 0.05;
-                        const glowSize = size * 1.4;
-                        const gradient = ctx.createRadialGradient(
-                            750/2 + anomalyData.offsetX, 470/2 + anomalyData.offsetY, 10,
-                            750/2 + anomalyData.offsetX, 470/2 + anomalyData.offsetY, glowSize
-                        );
-                        gradient.addColorStop(0, anomalyType === 3 ? '#ff00ff' : '#00ffaa');
-                        gradient.addColorStop(1, 'transparent');
-                        ctx.fillStyle = gradient;
-                        ctx.beginPath();
-                        ctx.arc(750/2 + anomalyData.offsetX, 470/2 + anomalyData.offsetY, glowSize, 0, Math.PI * 2);
-                        ctx.fill();
-                        ctx.restore();
-                    }
                 } else {
-                    ctx.fillStyle = '#ff4d6d';
-                    ctx.globalAlpha = 0.6;
-                    ctx.font = 'bold 40px sans-serif';
-                    ctx.fillText(`⚠️ АНОМАЛИЯ ${anomalyType}`, 250, 260);
-                    ctx.globalAlpha = 1;
+                    if (isSearching) {
+                        ctx.fillStyle = `rgba(255, 255, 0, ${0.1 + Math.sin(time * 1.5) * 0.05})`;
+                        ctx.font = 'bold 20px sans-serif';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('🔍 ИЩИТЕ ВНИМАТЕЛЬНО...', 375, 235 + Math.sin(time * 0.8) * 5);
+                        ctx.textAlign = 'start';
+                    }
                 }
             }
-            if (gameFinished) {
+            
+            if (gameFinished && !epicEnding) {
                 ctx.fillStyle = 'rgba(0,0,0,0.5)';
                 ctx.fillRect(0, 0, 750, 470);
                 ctx.fillStyle = '#fadf9e';
                 ctx.font = 'bold 54px sans-serif';
                 ctx.shadowColor = '#000';
                 ctx.shadowBlur = 18;
-                ctx.fillText('✨ ПОБЕДА ✨', 180, 240);
+                ctx.fillText(isMarathon ? '🏆 МАРАФОН!' : '✨ ПОБЕДА ✨', 180, 240);
                 ctx.shadowBlur = 0;
             }
         }
 
         function animate() {
-            if (hasAnomaly && !gameFinished) updateAnomalyAnimation();
+            if (hasAnomaly && !gameFinished && !epicEnding) updateAnomalyAnimation();
             drawRoom();
             animFrameId = requestAnimationFrame(animate);
         }
 
+        function unlockMarathon() {
+            marathonUnlocked = true;
+            marathonBtn.disabled = false;
+            marathonBtn.classList.remove('locked');
+            marathonBtn.textContent = '🏃 МАРАФОН (64)';
+            marathonStatus.textContent = '🌟 МАРАФОН РАЗБЛОКИРОВАН! 🌟';
+            playUnlockSound();
+        }
+
+        function goToMenu() {
+            if (animFrameId) {
+                cancelAnimationFrame(animFrameId);
+                animFrameId = null;
+            }
+            stopEpicMusic();
+            epicEnding = false;
+            epicTime = 0;
+            gameFinished = false;
+            hasAnomaly = false;
+            anomalyType = 0;
+            isSearching = false;
+            searchBtn.textContent = '🔎 Обзор';
+            searchBtn.classList.remove('active');
+            actionBtn.disabled = false;
+            backBtn.disabled = false;
+            searchBtn.disabled = false;
+            exitToMenuBtn.style.display = 'none';
+            time = 0;
+            currentRoom = 1;
+            generateAnomalies();
+            generateWindiRooms();
+            menuOverlay.classList.remove('hidden');
+            if (animFrameId) cancelAnimationFrame(animFrameId);
+            loadRoom(1);
+        }
+
         function loadRoom(roomNumber) {
-            if (gameFinished) return;
+            if (gameFinished || epicEnding) return;
             if (roomNumber < 1) roomNumber = MAX_ROOMS;
             if (roomNumber > MAX_ROOMS) {
+                let allFound = true;
+                for (let i = 1; i <= MAX_ROOMS; i++) {
+                    if (roomAnomalyMap[i] !== 0 && !anomalyFound[i]) {
+                        allFound = false;
+                        break;
+                    }
+                }
+                if (!allFound) {
+                    currentRoom = 1;
+                    loadRoom(currentRoom);
+                    return;
+                }
+                if (isMarathon) {
+                    epicEnding = true;
+                    epicTime = 0;
+                    playEpicMusic();
+                    updateUI();
+                    if (animFrameId) cancelAnimationFrame(animFrameId);
+                    animate();
+                    return;
+                }
                 gameFinished = true;
                 hasAnomaly = false;
                 anomalyType = 0;
                 updateUI();
                 if (animFrameId) cancelAnimationFrame(animFrameId);
                 drawRoom();
+                if (!isMarathon && !marathonUnlocked) {
+                    unlockMarathon();
+                }
                 return;
             }
             const anomalyId = roomAnomalyMap[roomNumber] || 0;
             hasAnomaly = (anomalyId !== 0);
             anomalyType = anomalyId;
+            isSearching = false;
+            searchBtn.textContent = '🔎 Обзор';
+            searchBtn.classList.remove('active');
+            
             if (hasAnomaly) {
-                time = Math.random() * 10;
-                anomalyData.speed = 0.8 + Math.random() * 0.6;
-                time += Math.random() * 5;
+                time = Math.random() * 20;
+                anomalyData.speed = 0.6 + Math.random() * 1.2;
+                time += Math.random() * 10;
+                
+                if (anomalyType === 3 || anomalyType === 11) {
+                    playScareSound();
+                } else if (anomalyType === 10) {
+                    playToiletPaperSound();
+                } else if (anomalyType === 13) {
+                    playAlertSound();
+                } else if (anomalyType === 9) {
+                    playBeep(500 + Math.random() * 200, 0.2 + Math.random() * 0.2, 0.2 + Math.random() * 0.2);
+                    setTimeout(() => playBeep(600 + Math.random() * 200, 0.2 + Math.random() * 0.2, 0.2 + Math.random() * 0.2), 150 + Math.random() * 100);
+                }
             } else {
                 anomalyData.offsetX = 0; anomalyData.offsetY = 0; anomalyData.rotation = 0;
                 anomalyData.scale = 1; anomalyData.flicker = 1; anomalyData.pulse = 1;
@@ -726,30 +1151,70 @@
             animate();
         }
 
-        function handleNextRoom() {
-            if (gameFinished) return;
-            if (hasAnomaly) { messageDisplay.textContent = '⚠️ АНОМАЛИЯ'; return; }
-            currentRoom++;
-            if (currentRoom > MAX_ROOMS) {
-                gameFinished = true;
-                hasAnomaly = false;
-                anomalyType = 0;
-                updateUI();
-                if (animFrameId) cancelAnimationFrame(animFrameId);
-                drawRoom();
+        function toggleSearch() {
+            if (gameFinished || epicEnding) return;
+            if (!hasAnomaly) {
+                messageDisplay.textContent = '✅ ЗДЕСЬ ЧИСТО';
                 return;
             }
+            if (anomalyFound[currentRoom]) {
+                messageDisplay.textContent = '✅ АНОМАЛИЯ УЖЕ НАЙДЕНА!';
+                return;
+            }
+            
+            isSearching = !isSearching;
+            if (isSearching) {
+                searchBtn.textContent = '🔍 Ищу...';
+                searchBtn.classList.add('active');
+                playSearchSound();
+                messageDisplay.textContent = '🔍 ОСМАТРИВАЮ КОМНАТУ...';
+                
+                const searchTime = 1200 + Math.random() * 800;
+                setTimeout(() => {
+                    if (isSearching && hasAnomaly && !anomalyFound[currentRoom]) {
+                        anomalyFound[currentRoom] = true;
+                        isSearching = false;
+                        searchBtn.textContent = '🔎 Обзор';
+                        searchBtn.classList.remove('active');
+                        messageDisplay.textContent = '✅ АНОМАЛИЯ НАЙДЕНА!';
+                        playBeep(700 + Math.random() * 300, 0.15 + Math.random() * 0.15, 0.2 + Math.random() * 0.2);
+                        setTimeout(() => playBeep(900 + Math.random() * 300, 0.15 + Math.random() * 0.15, 0.2 + Math.random() * 0.2), 120 + Math.random() * 80);
+                    }
+                }, searchTime);
+            } else {
+                searchBtn.textContent = '🔎 Обзор';
+                searchBtn.classList.remove('active');
+                messageDisplay.textContent = hasAnomaly ? '🔍 ИЩИ АНОМАЛИЮ' : '✅ ЧИСТО';
+            }
+        }
+
+        function handleNextRoom() {
+            if (gameFinished || epicEnding) return;
+            
+            if (hasAnomaly && !anomalyFound[currentRoom]) {
+                currentRoom = 1;
+                loadRoom(currentRoom);
+                return;
+            }
+            
+            currentRoom++;
             loadRoom(currentRoom);
         }
 
         function handleBackRoom() {
-            if (gameFinished) return;
-            if (hasAnomaly) {
-                if (currentRoom < MAX_ROOMS) { currentRoom++; loadRoom(currentRoom); }
-                else { gameFinished = true; hasAnomaly = false; anomalyType = 0; updateUI(); if (animFrameId) cancelAnimationFrame(animFrameId); drawRoom(); }
+            if (gameFinished || epicEnding) return;
+            
+            if (hasAnomaly && anomalyFound[currentRoom]) {
+                currentRoom++;
+                loadRoom(currentRoom);
                 return;
             }
-            if (currentRoom <= 1) { currentRoom = MAX_ROOMS; loadRoom(currentRoom); return; }
+            
+            if (currentRoom <= 1) {
+                currentRoom = MAX_ROOMS;
+                loadRoom(currentRoom);
+                return;
+            }
             currentRoom--;
             loadRoom(currentRoom);
         }
@@ -779,27 +1244,70 @@
         });
 
         function resetGame() {
-            generateAnomalies();
-            generateWindiRooms();
-            currentRoom = 1;
+            stopEpicMusic();
+            epicEnding = false;
+            epicTime = 0;
             gameFinished = false;
             hasAnomaly = false;
             anomalyType = 0;
+            isSearching = false;
+            searchBtn.textContent = '🔎 Обзор';
+            searchBtn.classList.remove('active');
             actionBtn.disabled = false;
             backBtn.disabled = false;
+            searchBtn.disabled = false;
+            exitToMenuBtn.style.display = 'none';
             time = 0;
+            currentRoom = 1;
+            generateAnomalies();
+            generateWindiRooms();
             if (animFrameId) cancelAnimationFrame(animFrameId);
             loadRoom(1);
             menuOverlay.classList.remove('hidden');
         }
 
+        function fullReset() {
+            marathonUnlocked = false;
+            marathonBtn.disabled = true;
+            marathonBtn.classList.add('locked');
+            marathonBtn.textContent = '🔒 МАРАФОН (64)';
+            marathonStatus.textContent = '🧼 Пройдите 16 комнат, чтобы открыть марафон';
+            resetGame();
+        }
+
+        function startGame(marathon = false) {
+            isMarathon = marathon;
+            MAX_ROOMS = marathon ? 64 : 16;
+            menuOverlay.classList.add('hidden');
+            stopEpicMusic();
+            epicEnding = false;
+            epicTime = 0;
+            gameFinished = false;
+            hasAnomaly = false;
+            anomalyType = 0;
+            isSearching = false;
+            searchBtn.textContent = '🔎 Обзор';
+            searchBtn.classList.remove('active');
+            actionBtn.disabled = false;
+            backBtn.disabled = false;
+            searchBtn.disabled = false;
+            exitToMenuBtn.style.display = 'none';
+            time = 0;
+            currentRoom = 1;
+            generateAnomalies();
+            generateWindiRooms();
+            if (animFrameId) cancelAnimationFrame(animFrameId);
+            loadRoom(1);
+        }
+
         // ----- ЗАГРУЗКА -----
         let loadCounter = 0;
-        const totalImages = 9;
+        const totalImages = 14;
         function imageLoaded() {
             loadCounter++;
             if (loadCounter >= totalImages) {
-                menuOverlay.classList.remove('hidden');
+                MAX_ROOMS = 16;
+                isMarathon = false;
                 generateAnomalies();
                 generateWindiRooms();
                 currentRoom = 1;
@@ -819,28 +1327,35 @@
         }
 
         startBtn.addEventListener('click', () => {
-            menuOverlay.classList.add('hidden');
-            if (gameFinished || currentRoom > MAX_ROOMS) resetGame();
-            menuOverlay.classList.add('hidden');
+            startGame(false);
+        });
+
+        marathonBtn.addEventListener('click', () => {
+            if (marathonUnlocked) {
+                startGame(true);
+            }
         });
 
         resetBtn.addEventListener('click', () => {
-            resetGame();
-            menuOverlay.classList.remove('hidden');
+            fullReset();
         });
+
+        exitToMenuBtn.addEventListener('click', goToMenu);
 
         actionBtn.addEventListener('click', handleNextRoom);
         backBtn.addEventListener('click', handleBackRoom);
         fullscreenBtn.addEventListener('click', toggleFullscreen);
+        searchBtn.addEventListener('click', toggleSearch);
 
         canvas.addEventListener('dblclick', () => {
-            resetGame();
-            menuOverlay.classList.remove('hidden');
+            fullReset();
         });
 
         window.addEventListener('load', () => {
             setTimeout(() => {
                 if (loadCounter >= totalImages) {
+                    MAX_ROOMS = 16;
+                    isMarathon = false;
                     generateAnomalies();
                     generateWindiRooms();
                     currentRoom = 1;
@@ -853,6 +1368,8 @@
 
         setTimeout(() => {
             if (loadCounter >= totalImages) {
+                MAX_ROOMS = 16;
+                isMarathon = false;
                 generateAnomalies();
                 generateWindiRooms();
                 currentRoom = 1;
@@ -862,7 +1379,7 @@
             }
         }, 500);
 
-        console.log('🚽 Туалетные истории 16 · полупрозрачные аномалии');
+        console.log('🚽 Туалетные истории 16 · увеличенный рандом аномалий');
     })();
 </script>
 </body>
